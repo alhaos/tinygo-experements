@@ -11,16 +11,16 @@ import (
 
 func main() {
 	time.Sleep(time.Second * 2)
-	fmt.Print("start delay success")
+	fmt.Println("start delay success")
 
 	i2c, err := initI2c(machine.GP4, machine.GP5)
 	if err != nil {
-		deadLoopErr(err)
+		deadLoopPrint(err)
 	}
 
 	display, err := initOLED(i2c)
 	if err != nil {
-		deadLoopErr(err)
+		deadLoopPrint(err)
 	}
 
 	x := int16(0)
@@ -31,6 +31,8 @@ func main() {
 	// Очищаем весь экран в начале
 	display.FillRectangle(0, 0, 128, 64, black)
 	display.Display()
+
+	DrawText(display, 0, 40, "Что за жопа", white)
 
 	for {
 		// Стираем только старую позицию квадрата
@@ -60,6 +62,34 @@ func main() {
 		display.Display()
 
 		time.Sleep(time.Millisecond * 20) // ~50 FPS
+	}
+}
+
+func DrawChar(display *ssd1306.Device, x, y int16, ch rune, c color.RGBA) {
+	data, ok := font5x8[ch]
+	if !ok {
+		data = font5x8['?']
+	}
+
+	fmt.Printf("found char [%c]\n", ch)
+
+	for colNum, col := range data {
+		xd := x + int16(colNum)
+		fmt.Printf("%d: %08b %d\n", colNum, col, xd)
+		for rowNum := range 8 {
+			if (col>>rowNum)&1 == 1 {
+				display.SetPixel(xd, y+int16(rowNum), c)
+			}
+		}
+	}
+
+	fmt.Println()
+}
+
+func DrawText(display *ssd1306.Device, x, y int16, text string, c color.RGBA) {
+	for i, r := range []rune(text) {
+		fmt.Printf("rune: [%c], i: %d\n", r, i)
+		DrawChar(display, x+int16(i*6), y, r, c)
 	}
 }
 
@@ -95,7 +125,7 @@ func initOLED(i2c *machine.I2C) (*ssd1306.Device, error) {
 	return display, nil
 }
 
-func deadLoopErr(err error) {
+func deadLoopPrint(err error) {
 	for {
 		print(err.Error())
 		time.Sleep(time.Second)
