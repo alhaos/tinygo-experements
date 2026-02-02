@@ -1,17 +1,21 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"image/color"
 	"machine"
 	"time"
 
-	"tinygo.org/x/drivers/bmp280"
+	"tinygo.org/x/drivers/adxl345"
 	"tinygo.org/x/drivers/ssd1306"
 )
 
 const varbose = false
+
+type Position struct {
+	x int32
+	y int32
+}
 
 func main() {
 
@@ -24,55 +28,76 @@ func main() {
 		deadLoopPrint(err)
 	}
 
-	sensor := bmp280.New(i2c)
-	sensor.Address = 0x76 // Явно указываем адрес
-
-	// 1. Сначала проверяем соединение
-	if !sensor.Connected() {
-		deadLoopPrint(errors.New("bmp280 sensor not connected"))
-	}
-
-	// 2. Только потом конфигурируем
-	sensor.Configure(
-		bmp280.STANDBY_1000MS,
-		bmp280.FILTER_16X,
-		bmp280.SAMPLING_16X,
-		bmp280.SAMPLING_16X,
-		bmp280.MODE_NORMAL,
-	)
-
 	display, err := initOLED(i2c)
 	if err != nil {
 		deadLoopPrint(err)
 	}
 
+	accel := adxl345.New(i2c)
+
+	accel.Configure()
+
+	currentPosition := Position{
+		x: 128 / 2,
+		y: 64 / 2,
+	}
+
+	var nextPosition Position
+
+	light := color.RGBA{255, 255, 255, 255}
+	dark := color.RGBA{0, 0, 0, 255}
+
 	for {
 
-		temperature, err := sensor.ReadTemperature()
+		x, y, _, err := accel.ReadAcceleration()
 		if err != nil {
-			deadLoopPrint(err)
-		}
-		pressure, err := sensor.ReadPressure()
-		if err != nil {
-			deadLoopPrint(err)
+			fmt.Printf("Read acceleration error: %s", err.Error())
 		}
 
-		temperatureMsg := fmt.Sprintf("%-20s", fmt.Sprintf("t: %d℃", temperature/1000))
-		pressureMsg := fmt.Sprintf("%-20s", fmt.Sprintf("p: %d mmHg", int(float32(pressure)*0.0000075006157584566)))
+		if x > 100 {
+			nextPosition.x = currentPosition.x + 1
+		}
 
-		DrawText(display, 10, 10, temperatureMsg, color.RGBA{255, 255, 255, 255})
-		DrawText(display, 10, 20, pressureMsg, color.RGBA{255, 255, 255, 255})
+		if x < -100 {
+			nextPosition.x = currentPosition.x - 1
+		}
+
+		if y > 100 {
+			nextPosition.y = currentPosition.y - 1
+		}
+
+		if y < -100 {
+			nextPosition.y = currentPosition.y + 1
+		}
+
+		display.SetPixel(
+			int16(currentPosition.x),
+			int16(currentPosition.y),
+			dark,
+		)
+
+		display.SetPixel(
+			int16(nextPosition.x),
+			int16(nextPosition.y),
+			light,
+		)
+
+		currentPosition = nextPosition
+
 		display.Display()
 
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond * 50)
 	}
 }
 
-func DrawChar(display *ssd1306.Device, x, y int16, ch rune, c color.RGBA) {
+func DrawChar(display *ssd1306.Device, x, y int16, ch rune) {
 	data, ok := font5x8[ch]
 	if !ok {
 		data = font5x8['?']
 	}
+
+	var light = color.RGBA{255, 255, 255, 255}
+	var dark = color.RGBA{0, 0, 0, 255}
 
 	// fmt.Printf("found char [%c]\n", ch)
 
@@ -81,18 +106,18 @@ func DrawChar(display *ssd1306.Device, x, y int16, ch rune, c color.RGBA) {
 		info(fmt.Sprintf("%d: %08b %d\n", colNum, col, xd))
 		for rowNum := range 8 {
 			if (col>>rowNum)&1 == 1 {
-				display.SetPixel(xd, y+int16(rowNum), c)
+				display.SetPixel(xd, y+int16(rowNum), light)
 			} else {
-				display.SetPixel(xd, y+int16(rowNum), color.RGBA{0, 0, 0, 255})
+				display.SetPixel(xd, y+int16(rowNum), dark)
 			}
 		}
 	}
 }
 
-func DrawText(display *ssd1306.Device, x, y int16, text string, c color.RGBA) {
+func DrawText(display *ssd1306.Device, x, y int16, text string) {
 	for i, r := range []rune(text) {
 		info(fmt.Sprintf("rune: [%c], i: %d\n", r, i))
-		DrawChar(display, x+int16(i*6), y, r, c)
+		DrawChar(display, x+int16(i*6), y, r)
 	}
 }
 
